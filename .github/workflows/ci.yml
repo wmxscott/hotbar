@@ -22,11 +22,12 @@ jobs:
         run: |
           uv run ruff check
           uv run ruff format --check
-      - name: Install tmux
+      - name: Install tmux and fzf
         if: runner.os == 'macOS'
         run: |
-          brew install tmux
+          brew install tmux fzf
           tmux -V
+          fzf --version
       - name: Test
         run: uv run pytest -rs
       - name: Smoke test

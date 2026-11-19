@@ -1,5 +1,5 @@
-"""hotbar init: a key table on prefix t whose letters open tools in popups, and a status line that
-draws the toolbar while it's on."""
+"""hotbar init: a key table on prefix t whose letters open tools in popups and whose / searches
+them, and a status line that draws the toolbar while it's on."""
 
 from __future__ import annotations
 
@@ -8,11 +8,12 @@ import os
 import re
 import subprocess
 import sys
+import unicodedata
 from collections.abc import Callable, Iterable, Sequence
 from pathlib import Path
 
 from hotbar import config, theme
-from hotbar.config import Config, Problem, Tool
+from hotbar.config import Config, Problem, Size, Tool
 from hotbar.theme import Mode
 
 TABLE = "hotbar"
@@ -21,6 +22,11 @@ LEAVE = ("switch-client", "-T", "root")
 WRAP = "#{?#{==:#{client_key_table},hotbar},#{E:@hotbar-toolbar},#{E:@hotbar-status-format}}"
 BOLT = "\uf0e7"
 MUTED = "overlay1"
+PICK = "@hotbar-pick"
+# The popup's border, fzf's pointer and scrollbar, and a cell for an icon drawn wide; then the
+# border, and fzf's prompt and the line under it.
+SEARCH_CHROME = (6, 4)
+SEARCH_MIN_WIDTH = 24
 LITERAL_RE = re.compile(r"(#+)(\[?)|[,}%]")
 ESCAPES = {",": "#,", "}": "#}", "%": "#{a:37}"}
 HASHES_RE = re.compile(r"(#+)(\[?)")
@@ -110,12 +116,10 @@ def popup(tool: Tool, mode: Mode, auto: bool) -> str:
     tmux runs a command of more than one argument without a shell, so `command` reaches /bin/sh
     as written, which runs it, or says in a tmux message that it isn't on PATH. Either way the
     popup closes when it exits."""
-    border = _themed(auto, mode, lambda mode: unexpanded(theme.colour(tool.color, mode)))
     unset = "".join(f"set-option -p -u {_env(name)} ; " for name, _ in tool.env)
     return unset + " ".join(
         (
-            f'display-popup -E -b rounded -S "fg={border}"',
-            f"-T {_argument(literal(f'{tool.icon} {tool.title}'))}",
+            _frame(tool.color, f"{tool.icon} {tool.title}", mode, auto),
             f"-w {_argument(str(tool.width))} -h {_argument(str(tool.height))}",
             f"-d {_argument('#{pane_current_path}')}",
             *(f"-e {name}=#{{q/a:{_env(name)}}}" for name, _ in tool.env),
@@ -123,6 +127,68 @@ def popup(tool: Tool, mode: Mode, auto: bool) -> str:
             *map(_argument, tool.command),
         )
     )
+
+
+def searcher(cfg: Config, mode: Mode, path: Path | None = None) -> str:
+    """What / runs: leave the mode, then search the tools in a popup. tmux runs the rest of a
+    binding only once its popup closes, so the search leaves the chosen tool's opener on the pane,
+    and this binding runs it after: on the pane and client a letter would use, and with the
+    search's popup gone, since tmux shows one popup at a time."""
+    width, height = search_size(cfg)
+    argv = (*command(), "search", *(("--config", str(path)) if path else ()))
+    find = " ".join(
+        (
+            _frame(MUTED, f"{BOLT} tools", mode, cfg.theme == "auto"),
+            f"-w {_within(width, 'client_width')} -h {_within(height, 'client_height')}",
+            *map(_argument, argv),
+            "--pane #{pane_id} --client #{q/a:client_name}",
+        )
+    )
+    run = f"run-shell -C {quoted(f'set-option -p -u {PICK} ; #{{{PICK}}}')}"
+    return " ; ".join(
+        (
+            " ".join(LEAVE),
+            f"set-option -p -u {PICK}",
+            f"run-shell -C {quoted(find)}",
+            f"if-shell -F {quoted(f'#{{{PICK}}}')} {{ {run} }}",
+        )
+    )
+
+
+def search_size(cfg: Config) -> tuple[Size, Size]:
+    """[search]'s size, else one that fits each tool's row, as the search draws it, and fzf."""
+    rows = (_cells(f" {tool.key}  {tool.icon} {tool.title}") for tool in cfg.tools)
+    width = max(SEARCH_MIN_WIDTH, max(rows, default=0) + SEARCH_CHROME[0])
+    return cfg.search.width or width, cfg.search.height or len(cfg.tools) + SEARCH_CHROME[1]
+
+
+def _within(size: Size, limit: str) -> str:
+    """`size` as a format that run-shell -C cuts to the client's `limit`, since tmux opens no
+    popup larger than its client."""
+    if isinstance(size, str):
+        return _argument(size)
+    return f"#{{?#{{e|>:{size},#{{{limit}}}}},#{{{limit}}},{size}}}"
+
+
+def _cells(text: str) -> int:
+    return sum(
+        0 if unicodedata.combining(c) else 2 if unicodedata.east_asian_width(c) in ("W", "F") else 1
+        for c in text
+    )
+
+
+def command() -> tuple[str, ...]:
+    """hotbar, for tmux to run later: the script that's running, whose path an upgrade keeps, else
+    this Python's module."""
+    script = os.path.abspath(sys.argv[0])
+    if os.path.basename(script) == "hotbar" and os.access(script, os.X_OK):
+        return (script,)
+    return (sys.executable, "-m", "hotbar")
+
+
+def _frame(colour: str, title: str, mode: Mode, auto: bool) -> str:
+    border = _themed(auto, mode, lambda mode: unexpanded(theme.colour(colour, mode)))
+    return f'display-popup -E -b rounded -S "fg={border}" -T {_argument(literal(title))}'
 
 
 def _argument(text: str) -> str:
@@ -134,12 +200,19 @@ def _env(name: str) -> str:
 
 
 def install(
-    cfg: Config, key: str, mode: Mode, current: str, saved: str | None, stale: str | None = None
+    cfg: Config,
+    key: str,
+    mode: Mode,
+    current: str,
+    saved: str | None,
+    stale: str | None = None,
+    path: Path | None = None,
 ) -> list[Command]:
     """The commands that put the toolbar on `key`, given the status-format there now, the one
-    an earlier run saved, and the earlier run's key if it was another."""
+    an earlier run saved, the earlier run's key if it was another, and the config for / to
+    search."""
     original = saved if current == WRAP and saved is not None else current
-    leave = ["/", "Escape", key, "Any"]
+    leave = ["Escape", key, "Any"]
     auto = cfg.theme == "auto"
     return [
         ("bind-key", "-N", "Open the hotbar", "-T", "prefix", key, *OPEN),
@@ -148,6 +221,7 @@ def install(
         ("bind-key", "-T", TABLE, "Any", *LEAVE),
         ("unbind-key", "-a", "-T", TABLE),
         *(("bind-key", "-T", TABLE, tool.key, opener(tool, mode, auto)) for tool in cfg.tools),
+        ("bind-key", "-T", TABLE, "/", searcher(cfg, mode, path)),
         *(("bind-key", "-T", TABLE, letter, *LEAVE) for letter in leave),
         ("set-option", "-s", "@hotbar-status-format", original),
         ("set-option", "-s", "@hotbar-toolbar", toolbar(cfg, mode)),
@@ -188,7 +262,8 @@ def init(path: Path | None, key: str) -> int:
         return _say("hotbar: the status-format it wrapped is lost; run tmux set -gu status-format")
     old = _option("-s", "@hotbar-key")
     stale = old if old and old != key and _bound(old) == " ".join(OPEN) else None
-    result = _tmux(*install(cfg, key, theme.resolve(cfg.theme), current, saved, stale))
+    path = (path or config.config_path()).absolute()
+    result = _tmux(*install(cfg, key, theme.resolve(cfg.theme), current, saved, stale, path))
     if result.returncode:
         return _say(f"hotbar: {result.stderr.strip()}")
     return 0
