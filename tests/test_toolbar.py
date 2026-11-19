@@ -99,14 +99,113 @@ def test_titles_icons_and_keys_are_drawn_as_written():
     )
 
 
-def bindings(key: str, *letters: str) -> list[tuple[str, ...]]:
+@pytest.mark.parametrize(
+    ("text", "quoted"),
+    [
+        ("lazygit", '"lazygit"'),
+        ("a b;", '"a b;"'),
+        ("it's", '"it\'s"'),
+        ('say "hi"', '"say \\"hi\\""'),
+        ("$HOME ~/x", '"\\$HOME \\~/x"'),
+        ("back\\slash", '"back\\\\slash"'),
+        ("one\ntwo\r", '"one\\ntwo\\r"'),
+        ("#{pane_id} {}", '"#{pane_id} {}"'),
+        ("", '""'),
+    ],
+)
+def test_quoted_text_is_one_tmux_argument(text, quoted):
+    assert toolbar.quoted(text) == quoted
+
+
+@pytest.mark.parametrize(
+    ("text", "escaped"),
+    [
+        ("lazygit", "lazygit"),
+        ("a#b", "a##b"),
+        ("#{pane_id}", "##{pane_id}"),
+        ("###S", "######S"),
+        ("#[fg=red]", "#[fg=red]"),
+        ("##[", "##["),
+        ("a,b} 50%", "a,b} 50%"),
+    ],
+)
+def test_unexpanded_text(text, escaped):
+    assert toolbar.unexpanded(text) == escaped
+
+
+LAUNCH = toolbar.unexpanded(toolbar.quoted(toolbar.LAUNCH))
+
+
+def test_a_popup_in_the_tools_colour_with_its_title_and_size_in_the_panes_folder():
+    assert toolbar.popup(LAZYGIT, "dark", auto=False) == (
+        'display-popup -E -b rounded -S "fg=##a6da95" -T "\ue702 lazygit" -w "80%" -h "80%" '
+        f'-d "##{{pane_current_path}}" /bin/sh -c {LAUNCH} hotbar #{{q/a:client_name}} "lazygit"'
+    )
+
+
+def test_a_light_popup():
+    assert '-S "fg=##40a02b"' in toolbar.popup(LAZYGIT, "light", auto=False)
+
+
+def test_an_auto_popup_follows_the_client_theme_and_falls_back_to_the_detected_one():
+    border = '-S "fg=#{?#{==:#{client_theme},light},##40a02b,##a6da95}"'
+    assert border in toolbar.popup(LAZYGIT, "dark", auto=True)
+
+
+def test_a_popup_has_the_configured_size():
+    tool = dataclasses.replace(LAZYGIT, width=120, height="95%")
+    assert ' -w "120" -h "95%" ' in toolbar.popup(tool, "dark", auto=False)
+
+
+def test_a_popup_title_and_command_reach_tmux_as_written():
+    tool = dataclasses.replace(
+        LAZYGIT, icon="#", title='it\'s "a" 5% ;$X', command=("sh", "-c", "echo $HOME; #x")
+    )
+    popup = toolbar.popup(tool, "dark", auto=False)
+    assert ' -T "######## it\'s \\"a\\" 5##{a:37} ;\\$X" ' in popup
+    assert popup.endswith(' "sh" "-c" "echo \\$HOME; ##x"')
+
+
+def test_env_is_expanded_into_a_pane_option_and_passed_quoted():
+    tool = dataclasses.replace(LAZYGIT, env=(("SID", "#{@session}"), ("AT", "#{pane_id}")))
+    popup = toolbar.popup(tool, "dark", auto=False)
+    assert popup.startswith(
+        "set-option -p -u @hotbar-env-SID ; set-option -p -u @hotbar-env-AT ; display-popup "
+    )
+    assert " -e SID=#{q/a:@hotbar-env-SID} -e AT=#{q/a:@hotbar-env-AT} /bin/sh " in popup
+    assert toolbar.opener(tool, "dark", auto=False) == (
+        'switch-client -T root ; set-option -p -F @hotbar-env-SID "#{@session}" ; '
+        f'set-option -p -F @hotbar-env-AT "#{{pane_id}}" ; run-shell -C {toolbar.quoted(popup)}'
+    )
+
+
+def test_a_letter_leaves_the_mode_and_opens_its_tool():
+    popup = toolbar.popup(LAZYGIT, "dark", auto=False)
+    assert toolbar.opener(LAZYGIT, "dark", auto=False) == (
+        f"switch-client -T root ; run-shell -C {toolbar.quoted(popup)}"
+    )
+
+
+def test_requires_opens_the_tool_only_when_it_expands_to_something():
+    popup = toolbar.popup(PRS, "dark", auto=False)
+    assert toolbar.opener(PRS, "dark", auto=False) == (
+        'switch-client -T root ; if-shell -F "#{!=:#{@session},}" '
+        f"{{ run-shell -C {toolbar.quoted(popup)} }}"
+    )
+
+
+def bindings(key: str, *tools: Tool) -> list[tuple[str, ...]]:
     return [
         ("bind-key", "-N", "Open the hotbar", "-T", "prefix", key, "switch-client", "-T", "hotbar"),
         ("bind-key", "-T", "hotbar", "Any", "switch-client", "-T", "root"),
         ("unbind-key", "-a", "-T", "hotbar"),
         *(
+            ("bind-key", "-T", "hotbar", tool.key, toolbar.opener(tool, "dark", auto=False))
+            for tool in tools
+        ),
+        *(
             ("bind-key", "-T", "hotbar", letter, "switch-client", "-T", "root")
-            for letter in (*letters, "/", "Escape", key, "Any")
+            for letter in ("/", "Escape", key, "Any")
         ),
     ]
 
@@ -129,25 +228,31 @@ def test_the_wrap_draws_the_toolbar_only_in_the_hotbar_table():
 def test_install_binds_the_table_and_wraps_the_status_line():
     cfg = Config(theme="dark", tools=(LAZYGIT, PRS))
     commands = toolbar.install(cfg, "t", "dark", current=DEFAULT, saved=None)
-    assert commands == bindings("t", "g", "p") + options(DEFAULT, cfg)
+    assert commands == bindings("t", LAZYGIT, PRS) + options(DEFAULT, cfg)
+
+
+def test_install_binds_letters_that_follow_the_client_theme_for_auto():
+    cfg = Config(theme="auto", tools=(LAZYGIT,))
+    commands = toolbar.install(cfg, "t", "dark", current=DEFAULT, saved=None)
+    assert ("bind-key", "-T", "hotbar", "g", toolbar.opener(LAZYGIT, "dark", auto=True)) in commands
 
 
 def test_install_again_wraps_the_saved_original_not_the_wrap():
     cfg = Config(theme="dark", tools=(PRS,))
     commands = toolbar.install(cfg, "t", "dark", current=WRAP, saved=DEFAULT)
-    assert commands == bindings("t", "p") + options(DEFAULT, cfg)
+    assert commands == bindings("t", PRS) + options(DEFAULT, cfg)
 
 
 def test_install_after_the_status_line_changed_keeps_the_new_one():
     cfg = Config(theme="dark", tools=(LAZYGIT,))
     commands = toolbar.install(cfg, "t", "dark", current="#S", saved=DEFAULT)
-    assert commands == bindings("t", "g") + options("#S", cfg)
+    assert commands == bindings("t", LAZYGIT) + options("#S", cfg)
 
 
 def test_install_with_another_key_unbinds_the_old_one():
     cfg = Config(theme="dark", tools=(LAZYGIT,))
     commands = toolbar.install(cfg, "T", "dark", current=WRAP, saved=DEFAULT, stale="t")
-    expected = bindings("T", "g")
+    expected = bindings("T", LAZYGIT)
     expected.insert(1, ("unbind-key", "-T", "prefix", "t"))
     assert commands == expected + options(DEFAULT, cfg, key="T")
 
@@ -164,4 +269,12 @@ def test_the_message_counts_the_problems():
     problems = [Problem(path, 3, "theme is wrong"), Problem(path, 9, "x"), Problem(path, 12, "y")]
     assert toolbar.message(problems) == (
         "hotbar: /c.toml:3: theme is wrong (1 of 3 problems; hotbar check lists them)"
+    )
+
+
+def test_the_message_writes_the_home_folder_as_a_tilde(monkeypatch, tmp_path):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    path = tmp_path / ".config" / "hotbar" / "config.toml"
+    assert toolbar.message([Problem(path, None, "no config file yet")]) == (
+        "hotbar: ~/.config/hotbar/config.toml: no config file yet"
     )

@@ -22,8 +22,13 @@ jobs:
         run: |
           uv run ruff check
           uv run ruff format --check
+      - name: Install tmux
+        if: runner.os == 'macOS'
+        run: |
+          brew install tmux
+          tmux -V
       - name: Test
-        run: uv run pytest
+        run: uv run pytest -rs
       - name: Smoke test
         run: |
           uv run hotbar --version

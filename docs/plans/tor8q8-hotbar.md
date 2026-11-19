@@ -351,3 +351,4 @@ There's no advisor tool in this session, so here is the strongest case against t
   - **The wrap** is `#{?#{==:#{client_key_table},hotbar},#{E:@hotbar-toolbar},#{E:@hotbar-status-format}}`, with the original and the toolbar in server options. The original is never re-escaped, and a re-run recognises the wrap.
   - **`auto`** reads tmux 3.8's `#{client_theme}` (in the binary, missing from its man page). It renders both palettes and picks between them, falling back to the mode detected at `init` until the client reports one.
   - **`init --key`** (default `t`) moves the toolbar key, and a tool on it is a config problem, from `check --key` too.
+- 2026-11-19: H3 landed as #5.
