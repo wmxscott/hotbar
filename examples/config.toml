@@ -1,0 +1,49 @@
+# hotbar's config. Copy it to ~/.config/hotbar/config.toml (or under $XDG_CONFIG_HOME), then
+# run `hotbar check` to see what it makes of it.
+#
+# Icons are Nerd Font glyphs; any character works. Colours are Catppuccin names, drawn from Latte
+# when the terminal is light and from Macchiato when it's dark.
+
+# "auto" follows the terminal's light or dark mode. Set "dark" or "light" to pin it.
+theme = "auto"
+
+# Tools appear on the toolbar in this order. Each key opens its tool.
+[[tools]]
+id = "lazygit"
+key = "g"
+title = "lazygit"
+command = ["lazygit"]
+icon = ""
+color = "green"
+width = "95%"
+height = "95%"
+
+[[tools]]
+id = "gh-dash"
+key = "d"
+title = "gh dash"
+command = ["gh", "dash"]
+icon = ""
+color = "blue"
+width = "95%"
+height = "95%"
+
+[[tools]]
+id = "nvim"
+key = "n"
+title = "nvim"
+command = ["nvim"]
+icon = ""
+color = "teal"
+width = "95%"
+height = "95%"
+
+[[tools]]
+id = "btop"
+key = "b"
+title = "btop"
+command = ["btop"]
+icon = ""
+color = "peach"
+width = "90%"
+height = "90%"
