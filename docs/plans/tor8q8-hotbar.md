@@ -354,3 +354,5 @@ There's no advisor tool in this session, so here is the strongest case against t
 - 2026-11-19: H3 landed as #5.
 - 2026-11-19: H4 landed as #6.
 - 2026-11-19: H5 landed as #7. Search lists titles only (fzf 0.59 can't search a hidden field); its popup sizes are cut to the client; the / binding hands off through a pane option once its popup closes.
+- 2026-11-19: H6 landed as #8; 1.0.0 released (tap#24) and rolled out (dotfiles#53, dotfiles-private#7).
+- 2026-11-19: 1.0.1 from the user's first use: the toolbar keeps status-left on its left, and popups open centred.
