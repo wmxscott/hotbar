@@ -145,3 +145,17 @@ def test_init_outside_tmux_says_how_to_run_it(tmp_path):
     assert (
         result.stderr == 'hotbar init runs inside tmux, from tmux.conf: run-shell "hotbar init"\n'
     )
+
+
+def test_help_lists_search():
+    assert "search" in run("--help").stdout
+    result = run("search", "--help")
+    assert (result.returncode, result.stderr) == (0, "")
+    for option in ("--config PATH", "--pane PANE", "--client CLIENT"):
+        assert option in result.stdout
+
+
+def test_search_needs_the_pane_and_the_client():
+    result = run("search")
+    assert (result.returncode, result.stdout) == (2, "")
+    assert "--pane" in result.stderr

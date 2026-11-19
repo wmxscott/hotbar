@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import dataclasses
+import sys
 from pathlib import Path
 
 import pytest
 
 from hotbar import toolbar
-from hotbar.config import Config, Problem, Tool
+from hotbar.config import Config, Problem, Search, Tool
 from hotbar.toolbar import WRAP
 
 LAZYGIT = Tool(
@@ -194,18 +195,19 @@ def test_requires_opens_the_tool_only_when_it_expands_to_something():
     )
 
 
-def bindings(key: str, *tools: Tool) -> list[tuple[str, ...]]:
+def bindings(key: str, cfg: Config, path: Path | None = None) -> list[tuple[str, ...]]:
     return [
         ("bind-key", "-N", "Open the hotbar", "-T", "prefix", key, "switch-client", "-T", "hotbar"),
         ("bind-key", "-T", "hotbar", "Any", "switch-client", "-T", "root"),
         ("unbind-key", "-a", "-T", "hotbar"),
         *(
             ("bind-key", "-T", "hotbar", tool.key, toolbar.opener(tool, "dark", auto=False))
-            for tool in tools
+            for tool in cfg.tools
         ),
+        ("bind-key", "-T", "hotbar", "/", toolbar.searcher(cfg, "dark", path)),
         *(
             ("bind-key", "-T", "hotbar", letter, "switch-client", "-T", "root")
-            for letter in ("/", "Escape", key, "Any")
+            for letter in ("Escape", key, "Any")
         ),
     ]
 
@@ -228,7 +230,7 @@ def test_the_wrap_draws_the_toolbar_only_in_the_hotbar_table():
 def test_install_binds_the_table_and_wraps_the_status_line():
     cfg = Config(theme="dark", tools=(LAZYGIT, PRS))
     commands = toolbar.install(cfg, "t", "dark", current=DEFAULT, saved=None)
-    assert commands == bindings("t", LAZYGIT, PRS) + options(DEFAULT, cfg)
+    assert commands == bindings("t", cfg) + options(DEFAULT, cfg)
 
 
 def test_install_binds_letters_that_follow_the_client_theme_for_auto():
@@ -240,21 +242,94 @@ def test_install_binds_letters_that_follow_the_client_theme_for_auto():
 def test_install_again_wraps_the_saved_original_not_the_wrap():
     cfg = Config(theme="dark", tools=(PRS,))
     commands = toolbar.install(cfg, "t", "dark", current=WRAP, saved=DEFAULT)
-    assert commands == bindings("t", PRS) + options(DEFAULT, cfg)
+    assert commands == bindings("t", cfg) + options(DEFAULT, cfg)
 
 
 def test_install_after_the_status_line_changed_keeps_the_new_one():
     cfg = Config(theme="dark", tools=(LAZYGIT,))
     commands = toolbar.install(cfg, "t", "dark", current="#S", saved=DEFAULT)
-    assert commands == bindings("t", LAZYGIT) + options("#S", cfg)
+    assert commands == bindings("t", cfg) + options("#S", cfg)
 
 
 def test_install_with_another_key_unbinds_the_old_one():
     cfg = Config(theme="dark", tools=(LAZYGIT,))
     commands = toolbar.install(cfg, "T", "dark", current=WRAP, saved=DEFAULT, stale="t")
-    expected = bindings("T", LAZYGIT)
+    expected = bindings("T", cfg)
     expected.insert(1, ("unbind-key", "-T", "prefix", "t"))
     assert commands == expected + options(DEFAULT, cfg, key="T")
+
+
+def test_install_binds_slash_to_search_the_config_it_loaded():
+    cfg = Config(theme="dark", tools=(LAZYGIT,))
+    path = Path("/c.toml")
+    commands = toolbar.install(cfg, "t", "dark", current=DEFAULT, saved=None, path=path)
+    assert commands == bindings("t", cfg, path) + options(DEFAULT, cfg)
+
+
+SEARCH = (
+    'display-popup -E -b rounded -S "fg=##8087a2" -T "\uf0e7 tools" '
+    "-w #{?#{e|>:24,#{client_width}},#{client_width},24} "
+    "-h #{?#{e|>:6,#{client_height}},#{client_height},6} "
+    '"/bin/hotbar" "search" "--config" "/c.toml" --pane #{pane_id} --client #{q/a:client_name}'
+)
+
+
+def test_slash_searches_in_a_popup_then_runs_what_the_search_left_on_the_pane(monkeypatch):
+    monkeypatch.setattr(toolbar, "command", lambda: ("/bin/hotbar",))
+    cfg = Config(theme="dark", tools=(LAZYGIT, PRS))
+    assert toolbar.searcher(cfg, "dark", Path("/c.toml")) == (
+        "switch-client -T root ; set-option -p -u @hotbar-pick ; "
+        f"run-shell -C {toolbar.quoted(SEARCH)} ; "
+        'if-shell -F "#{@hotbar-pick}" '
+        '{ run-shell -C "set-option -p -u @hotbar-pick ; #{@hotbar-pick}" }'
+    )
+
+
+def test_a_search_without_a_path_finds_the_config_itself(monkeypatch):
+    monkeypatch.setattr(toolbar, "command", lambda: ("/bin/hotbar",))
+    search = toolbar.searcher(Config(theme="dark", tools=(LAZYGIT, PRS)), "dark")
+    assert toolbar.quoted(SEARCH.replace(' "--config" "/c.toml"', "")) in search
+
+
+def test_an_auto_search_border_follows_the_client_theme():
+    search = toolbar.searcher(Config(theme="auto", tools=(LAZYGIT,)), "dark")
+    assert ' -S \\"fg=#{?#{==:#{client_theme},light},##8c8fa1,##8087a2}\\" ' in search
+
+
+@pytest.mark.parametrize(
+    ("tools", "size"),
+    [
+        ((), (24, 4)),
+        ((LAZYGIT, PRS), (24, 6)),
+        ((dataclasses.replace(LAZYGIT, title="a much longer title, to fit"),), (39, 5)),
+        ((dataclasses.replace(LAZYGIT, title="ツール" * 6),), (48, 5)),
+    ],
+)
+def test_the_search_fits_the_tools(tools, size):
+    assert toolbar.search_size(Config(tools=tools)) == size
+
+
+def test_the_search_takes_its_size_from_the_config():
+    cfg = Config(search=Search(width=50, height="40%"), tools=(LAZYGIT,))
+    assert toolbar.search_size(cfg) == (50, "40%")
+    assert toolbar.search_size(Config(search=Search(height=9), tools=(LAZYGIT,))) == (24, 9)
+    search = toolbar.searcher(cfg, "dark")
+    assert ' -w #{?#{e|>:50,#{client_width}},#{client_width},50} -h \\"40%\\" ' in search
+
+
+def test_tmux_runs_the_script_that_ran(monkeypatch, tmp_path):
+    script = tmp_path / "bin" / "hotbar"
+    script.parent.mkdir()
+    script.write_text("#!/bin/sh\n", encoding="utf-8")
+    script.chmod(0o755)
+    monkeypatch.setattr(sys, "argv", [str(script), "init"])
+    assert toolbar.command() == (str(script),)
+
+
+@pytest.mark.parametrize("argv0", ["/x/hotbar/__main__.py", "-c", "/nowhere/hotbar"])
+def test_tmux_runs_this_python_when_no_script_ran(monkeypatch, argv0):
+    monkeypatch.setattr(sys, "argv", [argv0, "init"])
+    assert toolbar.command() == (sys.executable, "-m", "hotbar")
 
 
 def test_the_message_names_the_first_problem():

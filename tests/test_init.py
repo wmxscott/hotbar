@@ -20,12 +20,15 @@ from pathlib import Path
 
 import pytest
 
-from hotbar.toolbar import WRAP
+from hotbar import search
+from hotbar.toolbar import BOLT, PICK, WRAP
 
 SCRIPT = os.path.join(os.path.dirname(sys.executable), "hotbar")
 THEME_REPORTS = {"dark": b"\x1b[?997;1n", "light": b"\x1b[?997;2n"}
 LEAVES = "switch-client -T root"
 OPENS = "switch-client -T root, then a popup"
+SEARCHES = "switch-client -T root, then the search"
+SEARCH = f"╭─{BOLT} tools".encode()
 FOREGROUND_RE = re.compile(rb"\x1b\[38;2;(\d+);(\d+);(\d+)m")
 AWKWARD = [
     *("a b", "it's", 'say "hi"', "#{pane_id}", "a;", ";", "$HOME", "~/x", "back\\slash"),
@@ -79,7 +82,11 @@ def wait_for(found: Callable[[], object], timeout: float = 5) -> object:
 class Server:
     def __init__(self, tmp_path: Path) -> None:
         self.name = f"hotbar-test-{uuid.uuid4().hex[:12]}"
-        self.env = {name: value for name, value in os.environ.items() if name != "TMUX"}
+        self.env = {
+            name: value
+            for name, value in os.environ.items()
+            if name != "TMUX" and not name.startswith("FZF_")
+        }
         self.config = tmp_path / "config.toml"
         self("-f", os.devnull, "new-session", "-d", "-s", "main", "-x", "250", "-y", "10", "cat")
         self.socket = Path(self("display-message", "-p", "#{socket_path}").strip())
@@ -108,10 +115,11 @@ class Server:
         return dict(line.split("\t") for line in result.stdout.splitlines())
 
     def table(self) -> dict[str, str]:
-        """The hotbar table, with a binding that leaves the mode and opens a popup as OPENS."""
+        """The hotbar table, with a binding that leaves the mode and opens a popup as OPENS, or the
+        search as SEARCHES."""
         opens = re.compile(rf"{LEAVES} \\; .*display-popup")
         return {
-            key: OPENS if opens.match(command) else command
+            key: SEARCHES if PICK in command else OPENS if opens.match(command) else command
             for key, command in self.keys("hotbar").items()
         }
 
@@ -186,6 +194,33 @@ class Client:
     def table(self) -> str:
         return self.format("#{client_key_table}")
 
+    def settle(self) -> None:
+        """Waits until the terminal has drawn nothing new for a moment."""
+
+        def still() -> bool:
+            drawn = len(self.output)
+            time.sleep(0.3)
+            return len(self.output) == drawn
+
+        wait_for(still, timeout=10)
+
+    def escape(self) -> None:
+        """Types Esc, and waits for what it closes to go. tmux holds a lone Esc while this terminal
+        owes it replies it never sends, and a key typed meanwhile would join it as Alt."""
+        drawn = len(self.output)
+        self.type("\x1b")
+        wait_for(lambda: len(self.output) > drawn)
+        self.settle()
+
+    def search(self) -> bytes:
+        """Opens the search from the toolbar, and gives what's drawn once fzf has listed the
+        tools."""
+        start = len(self.output)
+        open_tool(self, "/")
+        wait_for(lambda: SEARCH in self.output[start:])
+        self.settle()
+        return bytes(self.output[start:])
+
     def enters(self, table: str) -> bool:
         return bool(wait_for(lambda: self.table() == table))
 
@@ -231,9 +266,13 @@ def ok(result: subprocess.CompletedProcess[str]) -> None:
 
 
 def leave(*letters: str, key: str = "t") -> dict[str, str]:
-    """The hotbar table for tools on `letters`, each opening a popup, and every other key
-    leaving the mode."""
-    return {**dict.fromkeys(letters, OPENS), **dict.fromkeys(("/", "Escape", key, "Any"), LEAVES)}
+    """The hotbar table for tools on `letters`, each opening a popup, / searching, and every other
+    key leaving the mode."""
+    return {
+        **dict.fromkeys(letters, OPENS),
+        "/": SEARCHES,
+        **dict.fromkeys(("Escape", key, "Any"), LEAVES),
+    }
 
 
 def test_init_binds_the_table_and_wraps_the_status_line(server):
@@ -323,7 +362,7 @@ def test_the_toolbar_is_drawn_only_in_the_mode(server, client):
     assert client.status() == before
 
 
-@pytest.mark.parametrize("key", ["/", "t", "z", "Enter"])
+@pytest.mark.parametrize("key", ["t", "z", "Enter"])
 def test_every_key_leaves_the_mode_and_reaches_no_pane(server, client, key):
     ok(server.init(TOOLS))
     client.press("C-b", "t")
@@ -437,4 +476,105 @@ def test_a_command_that_is_not_on_path_says_so_and_leaves_no_popup(server, clien
     ok(server.init(tool("g", ["hotbar-test-missing", "--flag"])))
     open_tool(client, "g")
     wait_for(lambda: b"hotbar: can't start hotbar-test-missing: not found" in client.output)
+    assert client.reaches_the_pane()
+
+
+needs_fzf = pytest.mark.skipif(search.fzf_problem() is not None, reason="needs fzf 0.59 or later")
+SHOW = 'pwd > "$1.new"; printf %s "$FOO" >> "$1.new"; mv "$1.new" "$1"; read line'
+
+
+def searchable(tmp_path: Path) -> str:
+    """Two tools that write their folder and $FOO to a file named for them, then wait for a line,
+    and one that needs the pane option @x."""
+    return 'theme = "dark"\n' + "".join(
+        tool(key, ["sh", "-c", SHOW, "sh", str(tmp_path / title)], title=title, **fields)
+        for key, title, fields in (
+            ("g", "lazy git", {"color": "green"}),
+            ("d", "gh dash", {"color": "blue", "env": {"FOO": "#{@x}"}}),
+            ("p", "secret", {"color": "mauve", "requires": "#{@x}"}),
+        )
+    )
+
+
+@needs_fzf
+@pytest.mark.parametrize(
+    ("theme", "muted", "keycap"),
+    [("dark", "#8087a2", b"\x1b[48;2;166;218;149m"), ("light", "#8c8fa1", b"\x1b[48;2;64;160;43m")],
+)
+def test_slash_searches_the_tools_in_a_muted_popup(server, client, tmp_path, theme, muted, keycap):
+    ok(server.init(searchable(tmp_path).replace('theme = "dark"', 'theme = "auto"')))
+    client.report(theme)
+    drawn = client.search()
+    assert client.border(f"{BOLT} tools") == muted
+    assert keycap in drawn[drawn.index(SEARCH) :]
+    assert b"lazy git" in drawn
+    assert b"gh dash" in drawn
+    client.escape()
+    assert client.reaches_the_pane()
+    assert not list(tmp_path.glob("lazy git*")) + list(tmp_path.glob("gh dash*"))
+    assert PICK not in server("show-options", "-p", "-t", "main")
+
+
+@needs_fzf
+def test_typing_filters_and_enter_opens_the_tool_as_its_letter_would(server, client, tmp_path):
+    folder = tmp_path / "a folder"
+    folder.mkdir()
+    server("respawn-pane", "-k", "-t", "main", "-c", str(folder), "cat")
+    server("set-option", "-p", "-t", "main", "@x", "hello")
+    ok(server.init(searchable(tmp_path)))
+    client.search()
+    client.type("dash")
+    client.settle()
+    client.type("\r")
+    out = tmp_path / "gh dash"
+    assert wait_for(lambda: out.exists() and out.read_text()) == f"{folder.resolve()}\nhello"
+    assert client.border("• gh dash") == "#8aadf4"
+    assert PICK not in server("show-options", "-p", "-t", "main")
+    client.press("Enter")
+    assert client.reaches_the_pane()
+
+
+@needs_fzf
+def test_j_and_k_move_until_something_is_typed(server, client, tmp_path):
+    ok(server.init(searchable(tmp_path)))
+    client.search()
+    for key in "jkj":
+        client.type(key)
+        client.settle()
+    client.type("\r")
+    assert wait_for(lambda: (tmp_path / "gh dash").exists())
+    client.press("Enter")
+    assert client.reaches_the_pane()
+
+
+@needs_fzf
+def test_the_search_lists_a_tool_once_the_pane_has_what_it_requires(server, client, tmp_path):
+    ok(server.init(searchable(tmp_path)))
+    assert b"secret" not in client.search()
+    client.escape()
+    assert client.reaches_the_pane()
+    server("set-option", "-p", "-t", "main", "@x", "1")
+    assert b"secret" in client.search()
+    client.escape()
+    assert client.reaches_the_pane()
+
+
+def test_an_old_fzf_says_so_and_leaves_no_popup(server, client, tmp_path):
+    fake = tmp_path / "bin"
+    fake.mkdir()
+    (fake / "fzf").write_text("#!/bin/sh\necho '0.58.0 (old)'\n", encoding="utf-8")
+    (fake / "fzf").chmod(0o755)
+    server("set-environment", "-g", "PATH", f"{fake}:{os.environ['PATH']}")
+    ok(server.init(searchable(tmp_path)))
+    open_tool(client, "/")
+    message = b"hotbar: search needs fzf 0.59 or newer; found 0.58.0"
+    wait_for(lambda: message in client.output)
+    assert client.reaches_the_pane()
+
+
+@needs_fzf
+def test_a_search_taller_than_the_terminal_still_opens(server, client):
+    ok(server.init("".join(tool(key, ["true"]) for key in "abcdefgh")))
+    assert b"\x1b[48;2;" in client.search()
+    client.escape()
     assert client.reaches_the_pane()

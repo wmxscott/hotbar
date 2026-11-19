@@ -7,7 +7,7 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
-from hotbar import __version__, config, toolbar
+from hotbar import __version__, config, search, toolbar
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -29,13 +29,24 @@ def main(argv: Sequence[str] | None = None) -> int:
         'on. Run it from tmux.conf: run-shell "hotbar init". A bad config changes nothing, and '
         "tmux shows its first problem.",
     )
-    for command in (check, init):
+    find = commands.add_parser(
+        "search",
+        help="search the tools in fzf; the toolbar's / runs it",
+        description="Search the tools in fzf, in the popup the toolbar's / opens. Enter leaves the "
+        "chosen tool's tmux commands in PANE's @hotbar-pick, which / runs once the popup closes.",
+    )
+    find.add_argument(
+        "--pane", required=True, help="the pane the toolbar was opened from, as its #{pane_id}"
+    )
+    find.add_argument("--client", required=True, help="the client that opened it")
+    for command in (check, init, find):
         command.add_argument(
             "--config",
             type=Path,
             metavar="PATH",
             help="the config file (default: $XDG_CONFIG_HOME/hotbar/config.toml)",
         )
+    for command in (check, init):
         command.add_argument(
             "--key",
             default="t",
@@ -48,6 +59,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _check(args.config, args.key)
     if args.command == "init":
         return toolbar.init(args.config, args.key)
+    if args.command == "search":
+        return search.search(args.config, args.pane, args.client)
     parser.print_help()
     return 0
 
