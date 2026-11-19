@@ -284,3 +284,18 @@ def replace(line: str, new: str) -> str:
 )
 def test_rejects(tmp_path, text, expected):
     assert problems(tmp_path, text) == [expected]
+
+
+def test_a_tool_may_not_use_the_toolbar_key(tmp_path):
+    path = write(tmp_path, GH_DASH + LAZYGIT.replace('"g"', '"t"'))
+    with pytest.raises(ConfigError) as err:
+        config.load(path, toolbar_key="t")
+    assert [str(problem) for problem in err.value.problems] == [
+        f"{path}:8: tool 'lazygit': key 't' is the toolbar's own key; choose another, "
+        "or pass hotbar another --key"
+    ]
+
+
+def test_without_a_toolbar_key_any_key_will_do(tmp_path):
+    path = write(tmp_path, LAZYGIT.replace('"g"', '"t"'))
+    assert config.load(path).tools[0].key == "t"

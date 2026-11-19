@@ -14,6 +14,7 @@ from hotbar.theme import ACCENTS
 
 THEMES = ("auto", "dark", "light")
 REQUIRED = ("id", "key", "title", "command")
+CLASH = "is the toolbar's own key; choose another, or pass hotbar another --key"
 ID_RE = re.compile(r"[A-Za-z0-9_-]+")
 ENV_NAME_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 PERCENT_RE = re.compile(r"(\d{1,3})%")
@@ -74,7 +75,7 @@ def config_path() -> Path:
     return base / "hotbar" / "config.toml"
 
 
-def load(path: Path | None = None) -> Config:
+def load(path: Path | None = None, toolbar_key: str | None = None) -> Config:
     path = path or config_path()
     try:
         text = path.read_text(encoding="utf-8")
@@ -89,7 +90,7 @@ def load(path: Path | None = None) -> Config:
     except tomllib.TOMLDecodeError as err:
         raise ConfigError([_syntax_problem(path, text, err)]) from None
     report = _Report(path, text)
-    config = _config(data, report)
+    config = _config(data, report, toolbar_key)
     if report.problems:
         raise ConfigError(sorted(report.problems, key=lambda problem: problem.line or 0))
     return config
@@ -147,7 +148,7 @@ def _keys(dotted: str) -> tuple[str, ...]:
     return tuple(part.strip().strip("\"'") for part in dotted.split("."))
 
 
-def _config(data: dict, report: _Report) -> Config:
+def _config(data: dict, report: _Report, toolbar_key: str | None) -> Config:
     for name in data:
         if name not in ("theme", "search", "tools"):
             report((name,), f"unknown setting {name!r}")
@@ -157,7 +158,7 @@ def _config(data: dict, report: _Report) -> Config:
     return Config(
         theme=theme,
         search=_search(data.get("search", {}), report),
-        tools=_tools(data.get("tools", []), report),
+        tools=_tools(data.get("tools", []), report, toolbar_key),
     )
 
 
@@ -168,7 +169,7 @@ def _search(raw: object, report: _Report) -> Search:
     return Search(**_fields(raw, SEARCH_FIELDS, ("search",), "[search]", report))
 
 
-def _tools(raw: object, report: _Report) -> tuple[Tool, ...]:
+def _tools(raw: object, report: _Report, toolbar_key: str | None) -> tuple[Tool, ...]:
     if not isinstance(raw, list):
         report(("tools",), "tools must be an array of tables, written [[tools]]")
         return ()
@@ -198,6 +199,8 @@ def _tools(raw: object, report: _Report) -> tuple[Tool, ...]:
             if first != index:
                 both = f"{names[first]} and {names[index]}"
                 report((*where, "key"), f"tools {both} both use key {fields['key']!r}")
+            if fields["key"] == toolbar_key:
+                report((*where, "key"), f"{label}: key {toolbar_key!r} {CLASH}")
         if all(name in fields for name in REQUIRED):
             tools.append(Tool(**fields))
     return tuple(tools)
