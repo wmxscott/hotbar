@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | draft · next: H1 |
+| **Status** | in progress · next: release 1.0.0, then S1 and R |
 | **Updated** | 2026-11-19 |
 | **Tracker** | — |
 | **Related** | [design, approved 2026-11-19](../superpowers/specs/2026-11-19-hotbar-design.md); [herdr-launchpad](https://github.com/wmxscott/herdr-launchpad), the Herdr plugin it replaces; switchboard's [cards plan](https://github.com/wmxscott/switchboard/blob/main/docs/plans/toqdop-sidebar-cards.md), which Stack S waits on |
@@ -353,3 +353,4 @@ There's no advisor tool in this session, so here is the strongest case against t
   - **`init --key`** (default `t`) moves the toolbar key, and a tool on it is a config problem, from `check --key` too.
 - 2026-11-19: H3 landed as #5.
 - 2026-11-19: H4 landed as #6.
+- 2026-11-19: H5 landed as #7. Search lists titles only (fzf 0.59 can't search a hidden field); its popup sizes are cut to the client; the / binding hands off through a pane option once its popup closes.
