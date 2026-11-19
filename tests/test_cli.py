@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -12,15 +13,25 @@ from hotbar import __version__
 
 SCRIPT = os.path.join(os.path.dirname(sys.executable), "hotbar")
 COMMANDS = [(SCRIPT,), (sys.executable, "-m", "hotbar")]
+EXAMPLE = Path(__file__).resolve().parent.parent / "examples" / "config.toml"
+
+LAZYGIT = """\
+[[tools]]
+id = "lazygit"
+key = "g"
+title = "lazygit"
+command = ["lazygit"]
+"""
 
 
-def run(*args: str, command: tuple[str, ...] = (SCRIPT,)):
+def run(*args: str, command: tuple[str, ...] = (SCRIPT,), env: dict[str, str] | None = None):
     return subprocess.run(
         [*command, *args],
         stdin=subprocess.DEVNULL,
         capture_output=True,
         text=True,
         timeout=30,
+        env=env,
     )
 
 
@@ -50,3 +61,52 @@ def test_an_unknown_argument_is_a_usage_error():
     result = run("--bogus")
     assert (result.returncode, result.stdout) == (2, "")
     assert result.stderr.startswith("usage: hotbar")
+
+
+def test_help_lists_check():
+    assert "check" in run("--help").stdout
+    result = run("check", "--help")
+    assert (result.returncode, result.stderr) == (0, "")
+    assert "--config PATH" in result.stdout
+
+
+def test_check_lists_the_example_tools():
+    result = run("check", "--config", str(EXAMPLE))
+    assert (result.returncode, result.stderr) == (0, "")
+    assert result.stdout == "ok\n  g  lazygit\n  d  gh dash\n  n  nvim\n  b  btop\n"
+
+
+def test_check_reads_the_config_under_xdg_config_home(tmp_path):
+    (tmp_path / "hotbar").mkdir()
+    (tmp_path / "hotbar" / "config.toml").write_text(LAZYGIT, encoding="utf-8")
+    result = run("check", env={**os.environ, "XDG_CONFIG_HOME": str(tmp_path)})
+    assert (result.returncode, result.stdout, result.stderr) == (0, "ok\n  g  lazygit\n", "")
+
+
+def test_check_reports_a_duplicate_key_with_its_line(tmp_path):
+    path = tmp_path / "config.toml"
+    path.write_text(LAZYGIT + LAZYGIT.replace("lazygit", "tig"), encoding="utf-8")
+    result = run("check", "--config", str(path))
+    assert (result.returncode, result.stdout) == (1, "")
+    assert result.stderr == f"{path}:8: tools 'lazygit' and 'tig' both use key 'g'\n"
+
+
+def test_check_reports_every_problem(tmp_path):
+    path = tmp_path / "config.toml"
+    path.write_text('theme = "blue"\n' + LAZYGIT + "slot = 1\n", encoding="utf-8")
+    result = run("check", "--config", str(path))
+    assert (result.returncode, result.stdout) == (1, "")
+    assert result.stderr == (
+        f'{path}:1: theme must be "auto", "dark" or "light"\n'
+        f"{path}:7: tool 'lazygit': unknown setting 'slot'\n"
+    )
+
+
+def test_check_without_a_config(tmp_path):
+    path = tmp_path / "missing.toml"
+    result = run("check", "--config", str(path))
+    assert (result.returncode, result.stdout, result.stderr) == (
+        1,
+        "",
+        f"{path}: no config file yet\n",
+    )

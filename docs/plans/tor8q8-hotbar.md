@@ -345,3 +345,4 @@ There's no advisor tool in this session, so here is the strongest case against t
 ## Log
 
 - 2026-11-19: repo created and bootstrapped with `gh-harden` (CODEOWNERS `e2eaff1`); plan written from the approved design.
+- 2026-11-19: H1 landed as #2; gh-harden re-run to require the five CI checks.
