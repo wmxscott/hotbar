@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | in progress · next: release 1.0.0, then S1 and R |
+| **Status** | landed · 1.0.1 released and in use |
 | **Updated** | 2026-11-19 |
 | **Tracker** | — |
 | **Related** | [design, approved 2026-11-19](../superpowers/specs/2026-11-19-hotbar-design.md); [herdr-launchpad](https://github.com/wmxscott/herdr-launchpad), the Herdr plugin it replaces; switchboard's [cards plan](https://github.com/wmxscott/switchboard/blob/main/docs/plans/toqdop-sidebar-cards.md), which Stack S waits on |
@@ -356,3 +356,4 @@ There's no advisor tool in this session, so here is the strongest case against t
 - 2026-11-19: H5 landed as #7. Search lists titles only (fzf 0.59 can't search a hidden field); its popup sizes are cut to the client; the / binding hands off through a pane option once its popup closes.
 - 2026-11-19: H6 landed as #8; 1.0.0 released (tap#24) and rolled out (dotfiles#53, dotfiles-private#7).
 - 2026-11-19: 1.0.1 from the user's first use: the toolbar keeps status-left on its left, and popups open centred.
+- 2026-11-19: S1 landed as switchboard#35, with switchboard 1.4.1 (tap#27); `prs` is scoped to the pane's agent. R1 and R2 rolled out earlier the same day. All stacks landed.
