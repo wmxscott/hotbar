@@ -110,3 +110,38 @@ def test_check_without_a_config(tmp_path):
         "",
         f"{path}: no config file yet\n",
     )
+
+
+CLASH = "is the toolbar's own key; choose another, or pass hotbar another --key"
+
+
+def test_help_lists_init():
+    assert "init" in run("--help").stdout
+    result = run("init", "--help")
+    assert (result.returncode, result.stderr) == (0, "")
+    assert "--config PATH" in result.stdout
+    assert "--key KEY" in result.stdout
+
+
+def test_check_reports_a_tool_on_the_toolbar_key(tmp_path):
+    path = tmp_path / "config.toml"
+    path.write_text(LAZYGIT.replace('"g"', '"t"'), encoding="utf-8")
+    result = run("check", "--config", str(path))
+    assert (result.returncode, result.stdout) == (1, "")
+    assert result.stderr == f"{path}:3: tool 'lazygit': key 't' {CLASH}\n"
+
+
+def test_check_takes_the_toolbar_key(tmp_path):
+    result = run("check", "--config", str(EXAMPLE), "--key", "g")
+    assert (result.returncode, result.stdout) == (1, "")
+    assert result.stderr == f"{EXAMPLE}:13: tool 'lazygit': key 'g' {CLASH}\n"
+    assert run("check", "--config", str(EXAMPLE), "--key", "t").returncode == 0
+
+
+def test_init_outside_tmux_says_how_to_run_it(tmp_path):
+    env = {name: value for name, value in os.environ.items() if name != "TMUX"}
+    result = run("init", "--config", str(EXAMPLE), env=env)
+    assert (result.returncode, result.stdout) == (1, "")
+    assert (
+        result.stderr == 'hotbar init runs inside tmux, from tmux.conf: run-shell "hotbar init"\n'
+    )
