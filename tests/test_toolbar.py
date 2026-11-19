@@ -25,14 +25,19 @@ PRS = Tool(
     requires="#{@session}",
 )
 DEFAULT = "#[align=left]#{T:status-left}#[align=right]#{T:status-right}"
+LEFT = (
+    "#[align=left range=left #{E:status-left-style}]#[push-default]"
+    "#{T;=/#{status-left-length}:status-left}#[pop-default]#[norange default]"
+)
+CENTRE = '-x "##{E:@hotbar-popup-x}" -y "##{E:@hotbar-popup-y}"'
 
-DARK_LABEL = " #[fg=#c6a0f6#,bold]\uf0e7 tools#[default]"
+DARK_LABEL = "#[fg=#c6a0f6#,bold]\uf0e7 tools#[default]"
 DARK_LAZYGIT = (
     "  #[bg=#a6da95#,fg=#24273a#,bold] g #[default] #[fg=#a6da95]\ue702 #[fg=#8087a2]lazygit"
 )
 DARK_PRS = "  #[bg=#c6a0f6#,fg=#24273a#,bold] p #[default] #[fg=#c6a0f6]\ue726 #[fg=#8087a2]prs"
 DARK_RIGHT = "#[default]#[align=right]#[fg=#8087a2]/ search  esc "
-LIGHT_LABEL = " #[fg=#8839ef#,bold]\uf0e7 tools#[default]"
+LIGHT_LABEL = "#[fg=#8839ef#,bold]\uf0e7 tools#[default]"
 LIGHT_LAZYGIT = (
     "  #[bg=#40a02b#,fg=#eff1f5#,bold] g #[default] #[fg=#40a02b]\ue702 #[fg=#8c8fa1]lazygit"
 )
@@ -60,40 +65,45 @@ def test_literal_text(text, escaped):
     assert toolbar.literal(text) == escaped
 
 
-def test_a_dark_toolbar():
-    assert toolbar.toolbar(Config(theme="dark", tools=(LAZYGIT,)), "dark") == DARK
+def test_a_dark_toolbar_after_status_left():
+    assert toolbar.toolbar(Config(theme="dark", tools=(LAZYGIT,)), "dark") == LEFT + DARK
 
 
 def test_a_light_toolbar():
-    assert toolbar.toolbar(Config(theme="light", tools=(LAZYGIT,)), "light") == LIGHT
+    assert toolbar.toolbar(Config(theme="light", tools=(LAZYGIT,)), "light") == LEFT + LIGHT
 
 
 def test_no_tools_leaves_the_label_and_the_hints():
-    assert toolbar.toolbar(Config(theme="dark"), "dark") == DARK_LABEL + DARK_RIGHT
+    assert toolbar.toolbar(Config(theme="dark"), "dark") == LEFT + DARK_LABEL + DARK_RIGHT
 
 
 def test_tools_are_in_order_two_spaces_apart():
     cfg = Config(theme="dark", tools=(LAZYGIT, dataclasses.replace(PRS, requires=None)))
-    assert toolbar.toolbar(cfg, "dark") == DARK_LABEL + DARK_LAZYGIT + DARK_PRS + DARK_RIGHT
+    assert toolbar.toolbar(cfg, "dark") == LEFT + DARK_LABEL + DARK_LAZYGIT + DARK_PRS + DARK_RIGHT
 
 
 def test_requires_hides_the_keycap_when_it_expands_empty():
     cfg = Config(theme="dark", tools=(LAZYGIT, PRS))
     assert toolbar.toolbar(cfg, "dark") == (
-        DARK_LABEL + DARK_LAZYGIT + "#{?#{!=:#{@session},}," + DARK_PRS + ",}" + DARK_RIGHT
+        LEFT + DARK_LABEL + DARK_LAZYGIT + "#{?#{!=:#{@session},}," + DARK_PRS + ",}" + DARK_RIGHT
     )
 
 
 def test_auto_follows_the_client_theme_and_falls_back_to_the_detected_one():
     cfg = Config(theme="auto", tools=(LAZYGIT,))
-    assert toolbar.toolbar(cfg, "dark") == f"#{{?#{{==:#{{client_theme}},light}},{LIGHT},{DARK}}}"
-    assert toolbar.toolbar(cfg, "light") == f"#{{?#{{==:#{{client_theme}},dark}},{DARK},{LIGHT}}}"
+    assert toolbar.toolbar(cfg, "dark") == (
+        f"{LEFT}#{{?#{{==:#{{client_theme}},light}},{LIGHT},{DARK}}}"
+    )
+    assert toolbar.toolbar(cfg, "light") == (
+        f"{LEFT}#{{?#{{==:#{{client_theme}},dark}},{DARK},{LIGHT}}}"
+    )
 
 
 def test_titles_icons_and_keys_are_drawn_as_written():
     tool = Tool(id="x", key="#", title="a,b} 5%", command=("x",), icon="#", color="green")
     assert toolbar.toolbar(Config(theme="dark", tools=(tool,)), "dark") == (
-        DARK_LABEL
+        LEFT
+        + DARK_LABEL
         + "  #[bg=#a6da95#,fg=#24273a#,bold] #### #[default] #[fg=#a6da95]#### "
         + "#[fg=#8087a2]a#,b#} 5#{a:37}"
         + DARK_RIGHT
@@ -137,9 +147,10 @@ def test_unexpanded_text(text, escaped):
 LAUNCH = toolbar.unexpanded(toolbar.quoted(toolbar.LAUNCH))
 
 
-def test_a_popup_in_the_tools_colour_with_its_title_and_size_in_the_panes_folder():
+def test_a_centred_popup_in_the_tools_colour_with_its_title_and_size_in_the_panes_folder():
     assert toolbar.popup(LAZYGIT, "dark", auto=False) == (
-        'display-popup -E -b rounded -S "fg=##a6da95" -T "\ue702 lazygit" -w "80%" -h "80%" '
+        f'display-popup -E -b rounded -S "fg=##a6da95" -T "\ue702 lazygit" {CENTRE} '
+        '-w "80%" -h "80%" '
         f'-d "##{{pane_current_path}}" /bin/sh -c {LAUNCH} hotbar #{{q/a:client_name}} "lazygit"'
     )
 
@@ -217,6 +228,13 @@ def options(original: str, cfg: Config, key: str = "t") -> list[tuple[str, ...]]
         ("set-option", "-s", "@hotbar-status-format", original),
         ("set-option", "-s", "@hotbar-toolbar", toolbar.toolbar(cfg, "dark")),
         ("set-option", "-s", "@hotbar-key", key),
+        ("set-option", "-s", "@hotbar-popup-x", "#{e|/:#{e|-:#{client_width},#{popup_width}},2}"),
+        (
+            "set-option",
+            "-s",
+            "@hotbar-popup-y",
+            "#{e|/:#{e|+:#{e|+:#{client_height},#{popup_height}},#{==:#{status-position},top}},2}",
+        ),
         ("set-option", "-g", "status-format[0]", WRAP),
     ]
 
@@ -267,14 +285,14 @@ def test_install_binds_slash_to_search_the_config_it_loaded():
 
 
 SEARCH = (
-    'display-popup -E -b rounded -S "fg=##8087a2" -T "\uf0e7 tools" '
+    f'display-popup -E -b rounded -S "fg=##8087a2" -T "\uf0e7 tools" {CENTRE} '
     "-w #{?#{e|>:24,#{client_width}},#{client_width},24} "
     "-h #{?#{e|>:6,#{client_height}},#{client_height},6} "
     '"/bin/hotbar" "search" "--config" "/c.toml" --pane #{pane_id} --client #{q/a:client_name}'
 )
 
 
-def test_slash_searches_in_a_popup_then_runs_what_the_search_left_on_the_pane(monkeypatch):
+def test_slash_searches_in_a_centred_popup_then_runs_what_the_search_left_on_the_pane(monkeypatch):
     monkeypatch.setattr(toolbar, "command", lambda: ("/bin/hotbar",))
     cfg = Config(theme="dark", tools=(LAZYGIT, PRS))
     assert toolbar.searcher(cfg, "dark", Path("/c.toml")) == (

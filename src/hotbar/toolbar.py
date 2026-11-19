@@ -20,6 +20,20 @@ TABLE = "hotbar"
 OPEN = ("switch-client", "-T", TABLE)
 LEAVE = ("switch-client", "-T", "root")
 WRAP = "#{?#{==:#{client_key_table},hotbar},#{E:@hotbar-toolbar},#{E:@hotbar-status-format}}"
+# tmux's default status-format[0] draws status-left with this.
+STATUS_LEFT = (
+    "#[align=left range=left #{E:status-left-style}]#[push-default]"
+    "#{T;=/#{status-left-length}:status-left}#[pop-default]#[norange default]"
+)
+# display-popup's -x and -y: the middle of the terminal, with an odd spare row on the status
+# line's side, which puts the popup in the middle of the panes too. -y names the row below the
+# popup. tmux's own centre, its default, sits half a row to a row and a half high, enough to cover
+# a status line at the top. Server options hold them: inlined in each letter's binding, they'd
+# leave room in init's one tmux command for fewer tools.
+CENTRE_X = "#{e|/:#{e|-:#{client_width},#{popup_width}},2}"
+CENTRE_Y = "#{e|/:#{e|+:#{e|+:#{client_height},#{popup_height}},#{==:#{status-position},top}},2}"
+POPUP_X = "@hotbar-popup-x"
+POPUP_Y = "@hotbar-popup-y"
 BOLT = "\uf0e7"
 MUTED = "overlay1"
 PICK = "@hotbar-pick"
@@ -66,9 +80,10 @@ def unexpanded(text: str) -> str:
 
 
 def toolbar(cfg: Config, mode: Mode) -> str:
-    """The toolbar in `mode`. For "auto" it follows the theme the client reports, and `mode`, the
-    detected one, is for a client that hasn't."""
-    return _themed(cfg.theme == "auto", mode, lambda mode: _row(cfg.tools, mode))
+    """status-left, as the status line draws it outside the toolbar, then the toolbar in `mode`.
+    For "auto" it follows the theme the client reports, and `mode`, the detected one, is for a
+    client that hasn't."""
+    return STATUS_LEFT + _themed(cfg.theme == "auto", mode, lambda mode: _row(cfg.tools, mode))
 
 
 def _themed(auto: bool, mode: Mode, render: Callable[[Mode], str]) -> str:
@@ -80,7 +95,7 @@ def _themed(auto: bool, mode: Mode, render: Callable[[Mode], str]) -> str:
 
 def _row(tools: Iterable[Tool], mode: Mode) -> str:
     muted, base, mauve = (theme.colour(name, mode) for name in (MUTED, "base", "mauve"))
-    row = f" #[fg={mauve}#,bold]{BOLT} tools#[default]"
+    row = f"#[fg={mauve}#,bold]{BOLT} tools#[default]"
     for tool in tools:
         colour = theme.colour(tool.color, mode)
         keycap = (
@@ -188,7 +203,10 @@ def command() -> tuple[str, ...]:
 
 def _frame(colour: str, title: str, mode: Mode, auto: bool) -> str:
     border = _themed(auto, mode, lambda mode: unexpanded(theme.colour(colour, mode)))
-    return f'display-popup -E -b rounded -S "fg={border}" -T {_argument(literal(title))}'
+    return (
+        f'display-popup -E -b rounded -S "fg={border}" -T {_argument(literal(title))} '
+        f"-x {_argument(f'#{{E:{POPUP_X}}}')} -y {_argument(f'#{{E:{POPUP_Y}}}')}"
+    )
 
 
 def _argument(text: str) -> str:
@@ -226,6 +244,8 @@ def install(
         ("set-option", "-s", "@hotbar-status-format", original),
         ("set-option", "-s", "@hotbar-toolbar", toolbar(cfg, mode)),
         ("set-option", "-s", "@hotbar-key", key),
+        ("set-option", "-s", POPUP_X, CENTRE_X),
+        ("set-option", "-s", POPUP_Y, CENTRE_Y),
         ("set-option", "-g", "status-format[0]", WRAP),
     ]
 

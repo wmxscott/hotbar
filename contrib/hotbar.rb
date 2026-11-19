@@ -1,11 +1,11 @@
-# Draft formula for wmxscott/homebrew-tap. Fill in sha256 once v1.0.0 is tagged:
-#   curl -sL https://github.com/wmxscott/hotbar/archive/refs/tags/v1.0.0.tar.gz | shasum -a 256
+# Draft formula for wmxscott/homebrew-tap. Fill in sha256 once v1.0.1 is tagged:
+#   curl -sL https://github.com/wmxscott/hotbar/archive/refs/tags/v1.0.1.tar.gz | shasum -a 256
 class Hotbar < Formula
   include Language::Python::Virtualenv
 
   desc "Keyboard toolbar for tmux that opens your tools in popups"
   homepage "https://github.com/wmxscott/hotbar"
-  url "https://github.com/wmxscott/hotbar/archive/refs/tags/v1.0.0.tar.gz"
+  url "https://github.com/wmxscott/hotbar/archive/refs/tags/v1.0.1.tar.gz"
   sha256 "0000000000000000000000000000000000000000000000000000000000000000"
   license "MIT"
   head "https://github.com/wmxscott/hotbar.git", branch: "main"

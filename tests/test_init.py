@@ -18,6 +18,7 @@ import uuid
 from collections.abc import Callable
 from pathlib import Path
 
+import pyte
 import pytest
 
 from hotbar import search
@@ -30,6 +31,7 @@ OPENS = "switch-client -T root, then a popup"
 SEARCHES = "switch-client -T root, then the search"
 SEARCH = f"╭─{BOLT} tools".encode()
 FOREGROUND_RE = re.compile(rb"\x1b\[38;2;(\d+);(\d+);(\d+)m")
+LEFT_ENDS = "#[norange default]"
 AWKWARD = [
     *("a b", "it's", 'say "hi"', "#{pane_id}", "a;", ";", "$HOME", "~/x", "back\\slash"),
     *("one\ntwo", "%H", "#[fg=red]", "##", "#S", "{a}", "", "é ✓"),
@@ -139,15 +141,25 @@ class Server:
         )
 
 
+class Screen(pyte.Screen):
+    """pyte's screen, which would fail on tmux's question about the terminal's theme."""
+
+    def report_device_status(self, *args: object, **kwargs: object) -> None:
+        pass
+
+
 class Client:
     """A terminal attached to the server, which answers tmux's question about its theme."""
 
-    def __init__(self, server: Server, theme: str = "dark") -> None:
+    def __init__(
+        self, server: Server, theme: str = "dark", size: tuple[int, int] = (250, 10)
+    ) -> None:
         self.server = server
         self.theme = theme
+        self.size = size
         self.output = bytearray()
         self.fd, tty = pty.openpty()
-        fcntl.ioctl(tty, termios.TIOCSWINSZ, struct.pack("HHHH", 10, 250, 0, 0))
+        fcntl.ioctl(tty, termios.TIOCSWINSZ, struct.pack("HHHH", size[1], size[0], 0, 0))
         self.process = subprocess.Popen(
             ["tmux", "-L", server.name, "attach"],
             stdin=tty,
@@ -240,6 +252,19 @@ class Client:
         *_, colour = FOREGROUND_RE.finditer(self.output, 0, drawn)
         return "#" + "".join(f"{int(part):02x}" for part in colour.groups())
 
+    def popup(self) -> tuple[int, int, int, int]:
+        """The rows above and below the popup on the screen, and the columns left and right of
+        it."""
+        wait_for(lambda: "╰".encode() in self.output)
+        self.settle()
+        width, height = self.size
+        screen = Screen(width, height)
+        pyte.ByteStream(screen).feed(bytes(self.output))
+        rows = [[screen.buffer[y][x].data for x in range(width)] for y in range(height)]
+        top = next(y for y, row in enumerate(rows) if "╭" in row)
+        bottom = next(y for y, row in enumerate(rows) if "╰" in row)
+        return top, height - 1 - bottom, rows[top].index("╭"), width - 1 - rows[top].index("╮")
+
     def close(self) -> None:
         self.process.kill()
         self.process.wait()
@@ -257,6 +282,13 @@ def server(tmp_path):
 @pytest.fixture
 def client(server):
     client = Client(server)
+    yield client
+    client.close()
+
+
+@pytest.fixture
+def large_client(server):
+    client = Client(server, size=(200, 50))
     yield client
     client.close()
 
@@ -362,6 +394,27 @@ def test_the_toolbar_is_drawn_only_in_the_mode(server, client):
     assert client.status() == before
 
 
+def test_the_toolbar_starts_with_status_left_as_tmux_draws_it_by_default(server):
+    default = server.option("-g", "status-format[0]")
+    ok(server.init(TOOLS))
+    left = default[: default.index(LEFT_ENDS) + len(LEFT_ENDS)]
+    assert "status-left" in left
+    assert server.option("-s", "@hotbar-toolbar").startswith(f"{left}#[fg=#c6a0f6#,bold]")
+
+
+def test_the_toolbar_keeps_status_left_as_it_draws_outside_the_mode(server, client):
+    server("set-option", "-g", "status-left", "[#S] 100%% ##1, #[fg=red]a,b#[default] cut here")
+    server("set-option", "-g", "status-left-length", "21")
+    normal = client.status()
+    left = normal[: normal.index(LEFT_ENDS) + len(LEFT_ENDS)]
+    assert "]#[push-default][main] 100% #1, #[fg=red]a,b#[default] c#[pop-default]" in left
+    ok(server.init(TOOLS))
+    assert client.status() == normal
+    client.press("C-b", "t")
+    assert client.enters("hotbar")
+    assert client.status().startswith(f"{left}#[fg=#c6a0f6,bold]{BOLT} tools#[default]  ")
+
+
 @pytest.mark.parametrize("key", ["t", "z", "Enter"])
 def test_every_key_leaves_the_mode_and_reaches_no_pane(server, client, key):
     ok(server.init(TOOLS))
@@ -453,6 +506,26 @@ def test_a_tool_opens_only_once_the_pane_has_what_it_requires_and_gets_it(server
     open_tool(client, "p")
     assert wait_for(lambda: out.exists() and out.read_text()) == "hello"
     assert "@hotbar-env" not in server("show-options", "-p", "-t", "main")
+
+
+def off_centre(box: tuple[int, int, int, int], position: str) -> tuple[int, int, int]:
+    """How many rows the popup is off the middle of the terminal, and off the middle of the panes
+    below or above the status line, and how many columns it's off across."""
+    above, below, left, right = box
+    panes_above = above - 1 if position == "top" else above
+    panes_below = below - 1 if position == "bottom" else below
+    return abs(above - below), abs(panes_above - panes_below), abs(left - right)
+
+
+@pytest.mark.parametrize("size", ["45%", "95%"])
+@pytest.mark.parametrize("position", ["top", "bottom"])
+def test_a_popup_opens_in_the_middle_of_the_terminal(server, large_client, position, size):
+    server("set-option", "-g", "status-position", position)
+    ok(server.init(tool("g", ["sh", "-c", "read line"], width=size, height=size)))
+    open_tool(large_client, "g")
+    assert max(off_centre(large_client.popup(), position)) <= 1
+    large_client.press("Enter")
+    assert large_client.reaches_the_pane()
 
 
 def test_titles_commands_and_env_reach_the_tool_as_written(server, client, tmp_path):
@@ -557,6 +630,17 @@ def test_the_search_lists_a_tool_once_the_pane_has_what_it_requires(server, clie
     assert b"secret" in client.search()
     client.escape()
     assert client.reaches_the_pane()
+
+
+@needs_fzf
+@pytest.mark.parametrize("position", ["top", "bottom"])
+def test_the_search_opens_in_the_middle_of_the_terminal(server, large_client, tmp_path, position):
+    server("set-option", "-g", "status-position", position)
+    ok(server.init(searchable(tmp_path)))
+    large_client.search()
+    assert max(off_centre(large_client.popup(), position)) <= 1
+    large_client.escape()
+    assert large_client.reaches_the_pane()
 
 
 def test_an_old_fzf_says_so_and_leaves_no_popup(server, client, tmp_path):

@@ -2,18 +2,18 @@
 
 [![CI](https://github.com/wmxscott/hotbar/actions/workflows/ci.yml/badge.svg)](https://github.com/wmxscott/hotbar/actions/workflows/ci.yml)
 
-A keyboard toolbar for tmux, for the tools you reach for while long work runs: lazygit, gh dash, a pull request review. `prefix t` turns the status bar into a row of keycaps, and a letter opens that tool in a popup, in the folder of the pane you were in. When the tool exits, the popup closes and you're back at your work.
+A keyboard toolbar for tmux, for the tools you reach for while long work runs: lazygit, gh dash, a pull request review. `prefix t` turns the status bar, after your `status-left`, into a row of keycaps, and a letter opens that tool in a popup, in the folder of the pane you were in. When the tool exits, the popup closes and you're back at your work.
 
 ```
 normal      [main] 0:zsh* 1:logs-                                         "laptop" 12:04 19-Nov-26
-prefix t     ↯ tools   g  ● lazygit   d  ● gh dash   n  ● nvim   b  ● btop          / search  esc
-             └ mauve   └ keycap: the letter on the tool's colour, its icon in it, its name muted
+prefix t    [main] ↯ tools   g  ● lazygit   d  ● gh dash   n  ● nvim   b  ● btop    / search  esc
+                   └ mauve   └ keycap: the letter on the tool's colour, its icon in it, its name muted
 ```
 
-The toolbar draws its label and icons from a [Nerd Font](https://www.nerdfonts.com): the sketch above stands in `↯` and `●` for them, and leaves out the colours.
+`[main]` is tmux's default `status-left`. The toolbar draws its label and icons from a [Nerd Font](https://www.nerdfonts.com): the sketch above stands in `↯` and `●` for them, and leaves out the colours.
 
 - **It's instant.** The toolbar is a tmux format, built when hotbar loads, so no process starts on `prefix t`.
-- **Your status bar is left alone.** Outside the toolbar, it draws exactly as it did without hotbar.
+- **Your status bar is left alone.** Outside the toolbar, it draws exactly as it did without hotbar. In it, your `status-left` stays on the left, drawn as tmux draws it, and the toolbar takes the place of the window list and `status-right`.
 - **Tools can depend on the pane you're in.** A tool can be given values from that pane, and be hidden when the pane lacks one. See [Values from the pane](#values-from-the-pane).
 
 ## Requirements
@@ -62,8 +62,9 @@ run-shell "hotbar init"
 
 Then reload the config, with `tmux source-file` or your own reload key, and press `prefix t`.
 
-- **`hotbar init`** reads the config, binds `prefix t` to the toolbar, and wraps `status-format[0]`, the first status line, so it draws the toolbar while it's up and your own bar otherwise. Running it again replaces everything it set, so reloads are safe.
+- **`hotbar init`** reads the config, binds `prefix t` to the toolbar, and wraps `status-format[0]`, the first status line, so it draws your `status-left` and the toolbar while it's up, and your own bar otherwise. Running it again replaces everything it set, so reloads are safe.
 - **Put it after anything that sets `status-format`.** A later `set -g status-format[0]` replaces the wrap until `hotbar init` runs again. Setting `status-left` and `status-right`, as most themes do, is fine anywhere.
+- **The toolbar draws `status-left` as tmux's default status line does,** with `status-left-style` and `status-left-length`, and puts its label where the window list would start, after `status-left`'s own trailing spaces. A `status-left` that lights up for the prefix with `#{client_prefix}` stays lit in the toolbar, since tmux sets it in every key table but the root one.
 - **After editing the config,** run `hotbar init` again for the toolbar and its letters to change: reload your tmux config, for example with a `prefix R` bound to `source-file`, or run `hotbar init` in any pane.
 - **A mistake in the config changes nothing.** tmux shows one message naming the first problem and its line, and the toolbar from the last good config stays. See [Checking the config](#checking-the-config).
 
@@ -95,6 +96,7 @@ With [another key](#another-key), that key takes `t`'s place.
 
 ### A tool's popup
 
+- **It opens in the middle of the terminal,** with the status line at the top or the bottom.
 - **The border** is rounded, in the tool's colour, and the title is its icon and name.
 - **It starts in the folder** of the pane you were in.
 - **It closes when the tool exits.** Nothing is kept running.
@@ -103,7 +105,7 @@ With [another key](#another-key), that key takes `t`'s place.
 
 ### Search
 
-`/` opens a small popup, titled `↯ tools` with a muted border, that lists the tools as the toolbar draws them:
+`/` opens a small popup in the middle of the terminal, titled `↯ tools` with a muted border, that lists the tools as the toolbar draws them:
 
 - **Typing** filters by title.
 - **`j` / `k`** move while nothing's typed. After that, they type, and the arrow keys move.
@@ -289,7 +291,7 @@ A string command becomes a list through `sh -c`, so `'brew upgrade; read -r _'` 
 
 ## Known limits
 
-- **Dozens of tools.** `hotbar init` sends all its bindings to tmux as one command, and tmux limits a command's length. With `theme = "auto"`, which draws both palettes, 20 short tools fit and 25 don't; a fixed theme fits a few more, and long titles or `env` fewer. Past the limit, `init` shows `hotbar: command too long` and changes nothing.
+- **Dozens of tools.** `hotbar init` sends all its bindings to tmux as one command, and tmux limits a command's length. With `theme = "auto"`, which draws both palettes, 19 short tools fit and 20 don't; a fixed theme fits a few more, and long titles or `env` fewer. Past the limit, `init` shows `hotbar: command too long` and changes nothing.
 - **A popup sized in cells larger than the terminal doesn't open.** tmux opens no popup larger than the terminal, and a tool's `width` and `height` aren't cut to fit. Use percentages.
 - **No persistent tools, yet.** Every tool quits when its popup closes, and starts afresh next time. Keeping tools running between opens is planned.
 
