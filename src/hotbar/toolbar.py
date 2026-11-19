@@ -1,12 +1,14 @@
-"""hotbar init: a key table on prefix t, and a status line that draws the toolbar while it's on."""
+"""hotbar init: a key table on prefix t whose letters open tools in popups, and a status line that
+draws the toolbar while it's on."""
 
 from __future__ import annotations
 
+import dataclasses
 import os
 import re
 import subprocess
 import sys
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from pathlib import Path
 
 from hotbar import config, theme
@@ -21,6 +23,12 @@ BOLT = "\uf0e7"
 MUTED = "overlay1"
 LITERAL_RE = re.compile(r"(#+)(\[?)|[,}%]")
 ESCAPES = {",": "#,", "}": "#}", "%": "#{a:37}"}
+HASHES_RE = re.compile(r"(#+)(\[?)")
+QUOTES = str.maketrans({"\\": "\\\\", '"': '\\"', "$": "\\$", "~": "\\~", "\n": "\\n", "\r": "\\r"})
+LAUNCH = (
+    'c=$1; shift; command -v "$1" >/dev/null 2>&1 && exec "$@"; '
+    'tmux display-message -c "$c" -l "hotbar: can\'t start $1: not found"'
+)
 
 Command = tuple[str, ...]
 
@@ -40,15 +48,28 @@ def literal(text: str) -> str:
     return LITERAL_RE.sub(escape, text)
 
 
+def quoted(text: str) -> str:
+    """`text` as one argument in tmux's command language."""
+    return '"' + text.translate(QUOTES) + '"'
+
+
+def unexpanded(text: str) -> str:
+    """`text` as a format that one expansion turns back into it. A run of # before [ is left
+    alone by the expander, so it stays as it is."""
+    return HASHES_RE.sub(lambda match: match[0] if match[2] else match[1] * 2, text)
+
+
 def toolbar(cfg: Config, mode: Mode) -> str:
     """The toolbar in `mode`. For "auto" it follows the theme the client reports, and `mode`, the
     detected one, is for a client that hasn't."""
-    if cfg.theme != "auto":
-        return _row(cfg.tools, mode)
+    return _themed(cfg.theme == "auto", mode, lambda mode: _row(cfg.tools, mode))
+
+
+def _themed(auto: bool, mode: Mode, render: Callable[[Mode], str]) -> str:
+    if not auto:
+        return render(mode)
     other: Mode = "light" if mode == "dark" else "dark"
-    return (
-        f"#{{?#{{==:#{{client_theme}},{other}}},{_row(cfg.tools, other)},{_row(cfg.tools, mode)}}}"
-    )
+    return f"#{{?#{{==:#{{client_theme}},{other}}},{render(other)},{render(mode)}}}"
 
 
 def _row(tools: Iterable[Tool], mode: Mode) -> str:
@@ -66,19 +87,67 @@ def _row(tools: Iterable[Tool], mode: Mode) -> str:
     return row + f"#[default]#[align=right]#[fg={muted}]/ search  esc "
 
 
+def opener(tool: Tool, mode: Mode, auto: bool) -> str:
+    """What a tool's letter runs: leave the mode, then, if its `requires` expands to something in
+    the pane, expand its `env` there and open its popup."""
+    run = " ; ".join(
+        (
+            *(f"set-option -p -F {_env(name)} {quoted(value)}" for name, value in tool.env),
+            f"run-shell -C {quoted(popup(tool, mode, auto))}",
+        )
+    )
+    if tool.requires:
+        run = f"if-shell -F {quoted(f'#{{!=:{tool.requires},}}')} {{ {run} }}"
+    return f"{' '.join(LEAVE)} ; {run}"
+
+
+def popup(tool: Tool, mode: Mode, auto: bool) -> str:
+    """The popup, as a format for run-shell -C to expand against the pane and run. display-popup
+    expands neither its -e values nor its -S style, so run-shell fills in the border colour for
+    the client's theme, and each `env` value quoted by q/a, which quotes only a variable, so
+    opener first expands it into a pane option.
+
+    tmux runs a command of more than one argument without a shell, so `command` reaches /bin/sh
+    as written, which runs it, or says in a tmux message that it isn't on PATH. Either way the
+    popup closes when it exits."""
+    border = _themed(auto, mode, lambda mode: unexpanded(theme.colour(tool.color, mode)))
+    unset = "".join(f"set-option -p -u {_env(name)} ; " for name, _ in tool.env)
+    return unset + " ".join(
+        (
+            f'display-popup -E -b rounded -S "fg={border}"',
+            f"-T {_argument(literal(f'{tool.icon} {tool.title}'))}",
+            f"-w {_argument(str(tool.width))} -h {_argument(str(tool.height))}",
+            f"-d {_argument('#{pane_current_path}')}",
+            *(f"-e {name}=#{{q/a:{_env(name)}}}" for name, _ in tool.env),
+            f"/bin/sh -c {_argument(LAUNCH)} hotbar #{{q/a:client_name}}",
+            *map(_argument, tool.command),
+        )
+    )
+
+
+def _argument(text: str) -> str:
+    return unexpanded(quoted(text))
+
+
+def _env(name: str) -> str:
+    return f"@hotbar-env-{name}"
+
+
 def install(
     cfg: Config, key: str, mode: Mode, current: str, saved: str | None, stale: str | None = None
 ) -> list[Command]:
     """The commands that put the toolbar on `key`, given the status-format there now, the one
     an earlier run saved, and the earlier run's key if it was another."""
     original = saved if current == WRAP and saved is not None else current
-    leave = [*(tool.key for tool in cfg.tools), "/", "Escape", key, "Any"]
+    leave = ["/", "Escape", key, "Any"]
+    auto = cfg.theme == "auto"
     return [
         ("bind-key", "-N", "Open the hotbar", "-T", "prefix", key, *OPEN),
         *([("unbind-key", "-T", "prefix", stale)] if stale else []),
         # unbind -a on a table that doesn't exist ends the command list, silently.
         ("bind-key", "-T", TABLE, "Any", *LEAVE),
         ("unbind-key", "-a", "-T", TABLE),
+        *(("bind-key", "-T", TABLE, tool.key, opener(tool, mode, auto)) for tool in cfg.tools),
         *(("bind-key", "-T", TABLE, letter, *LEAVE) for letter in leave),
         ("set-option", "-s", "@hotbar-status-format", original),
         ("set-option", "-s", "@hotbar-toolbar", toolbar(cfg, mode)),
@@ -88,10 +157,19 @@ def install(
 
 
 def message(problems: Sequence[Problem]) -> str:
-    text = f"hotbar: {problems[0]}"
+    first = problems[0]
+    text = f"hotbar: {dataclasses.replace(first, path=_tilde(first.path))}"
     if len(problems) > 1:
         text += f" (1 of {len(problems)} problems; hotbar check lists them)"
     return text
+
+
+def _tilde(path: Path) -> Path:
+    """`path` with the home folder as ~, so a message tmux cuts to fit keeps its end."""
+    try:
+        return Path("~", path.relative_to(Path.home()))
+    except ValueError:
+        return path
 
 
 def init(path: Path | None, key: str) -> int:
