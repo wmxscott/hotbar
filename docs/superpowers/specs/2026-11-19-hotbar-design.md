@@ -37,7 +37,7 @@ These were offered as guesses and the user didn't object:
 ## Non-goals
 
 - Herdr support. herdr-launchpad keeps that.
-- A project list or launcher. The herdr-projects port is on hold.
+- A project list or launcher. The herdr-projects port was dropped (user, 2026-11-20): with sessions restored across restarts, opening a repo that has none is rare, and `wkt --tmux` from its folder covers it.
 - The mouse. Nothing needs it.
 - A config migration command. The README shows the mapping, and the user's own config is converted by hand in the rollout (my call).
 - **Persistent tools: deferred (user, 2026-11-19, "low priority").** Every tool quits when its popup closes. For when it's revisited, the design question is already known:
@@ -145,7 +145,7 @@ From their launchpad config:
 - nvim (teal, U+E7C5), update dotfiles (yellow, U+F2C1), wkt (U+E725).
 
 Two of launchpad's tools change (my calls, from the builder check):
-- **`projects` is dropped,** because it runs Herdr's projects plugin, whose port is on hold.
+- **`projects` is dropped,** because it runs Herdr's projects plugin, which won't be ported.
 - **`wkt` runs `wkt --tmux`** instead of `wkt --herdr`. It duplicates `prefix W`, which is harmless.
 
 The letters in the mockup were my guesses: `g` lazygit, `r` tuicr, `d` gh dash, `p` prs, `n` nvim, `u` dotfiles, `w` wkt. The user confirms them at rollout.
